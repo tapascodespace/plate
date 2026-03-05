@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { type Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import prisma from "@/lib/db";
+
+type CookProfileRow = Prisma.CookProfileGetPayload<{
+  include: {
+    user: { select: { id: true; name: true; email: true; avatar: true } };
+    dishes: true;
+  };
+}>;
 
 function getSupabaseAdminOrThrow() {
   const supabase = createSupabaseAdminClient();
@@ -23,7 +31,7 @@ export async function GET() {
       .maybeSingle();
 
     if (!cookProfile) {
-      const fallbackProfile = await prisma.cookProfile.findUnique({
+      const fallbackProfile = (await prisma.cookProfile.findUnique({
         where: { userId: session.sub },
         include: {
           user: {
@@ -38,7 +46,7 @@ export async function GET() {
             orderBy: { createdAt: "desc" },
           },
         },
-      });
+      })) as CookProfileRow | null;
 
       if (!fallbackProfile) {
         return NextResponse.json(

@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { type Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth";
 import { listCookOrders } from "@/lib/data/orders";
 import prisma from "@/lib/db";
+
+type OrderRow = Prisma.OrderGetPayload<{
+  include: {
+    customer: { select: { name: true } };
+    items: { include: { dish: { select: { name: true } } } };
+  };
+}>;
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +33,7 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      const fallbackOrders = await prisma.order.findMany({
+      const fallbackOrders = (await prisma.order.findMany({
         where: { cookProfileId: cookProfile.id },
         include: {
           customer: { select: { name: true } },
@@ -33,7 +41,7 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { createdAt: "desc" },
         take: limit,
-      });
+      })) as OrderRow[];
 
       const normalizedOrders: Array<{
         id: string;

@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
+import { type Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/auth";
 import { getCookStats } from "@/lib/data/orders";
 import prisma from "@/lib/db";
+
+type OrderRow = Prisma.OrderGetPayload<{
+  include: {
+    customer: { select: { name: true } };
+    items: { include: { dish: { select: { name: true } } } };
+  };
+}>;
 
 export async function GET() {
   try {
@@ -21,14 +29,14 @@ export async function GET() {
         );
       }
 
-      const orders = await prisma.order.findMany({
+      const orders = (await prisma.order.findMany({
         where: { cookProfileId: cookProfile.id },
         include: {
           customer: { select: { name: true } },
           items: { include: { dish: { select: { name: true } } } },
         },
         orderBy: { createdAt: "desc" },
-      });
+      })) as OrderRow[];
 
       const totalOrders = orders.length;
       let pendingOrders = 0;
