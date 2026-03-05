@@ -19,7 +19,21 @@ export async function POST(request: NextRequest) {
     const validRoles = ["CUSTOMER", "COOK"] as const;
     const userRole = validRoles.includes(role) ? role : "CUSTOMER";
 
+    // ── Step 1: Check Prisma FIRST to prevent orphaned Supabase users ──────────
+    const existingPrismaUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingPrismaUser) {
+      return NextResponse.json(
+        { success: false, error: "An account with this email already exists. Please sign in." },
+        { status: 409 }
+      );
+    }
+
+    // ── Step 2: Create / locate Supabase auth user ─────────────────────────────
     let externalAuthUserId: string | null = null;
+    let supabaseUserCreated = false;
     const supabaseCookiesToSet: {
       name: string;
       value: string;
@@ -50,32 +64,55 @@ export async function POST(request: NextRequest) {
         email,
         password,
         email_confirm: true,
-        user_metadata: {
-          full_name: name,
-        },
+        user_metadata: { full_name: name },
       });
 
       if (error) {
-        return NextResponse.json(
-          { success: false, error: error.message },
-          { status: 400 }
-        );
+        // If Supabase says the user already exists, it means a previous registration
+        // attempt partially failed (Supabase succeeded but Prisma didn't).
+        // Recover by finding that existing Supabase user and continuing with
+        // Prisma creation below.
+        if (
+          error.message.toLowerCase().includes("already registered") ||
+          error.message.toLowerCase().includes("already been registered") ||
+          error.message.toLowerCase().includes("user already exists")
+        ) {
+          // Recovery path: Supabase auth user exists but Prisma record is missing.
+          // Find the orphaned Supabase user so we can link the new Prisma record.
+          const { data: listData } = await supabaseAdmin.auth.admin.listUsers({
+            page: 1,
+            perPage: 1000,
+          });
+          const orphanedUser = listData?.users?.find((u) => u.email === email);
+          if (orphanedUser) {
+            externalAuthUserId = orphanedUser.id;
+            // Don't mark as newly created — no cleanup needed if Prisma fails
+          } else {
+            return NextResponse.json(
+              { success: false, error: "An account with this email already exists. Please sign in." },
+              { status: 409 }
+            );
+          }
+        } else {
+          return NextResponse.json(
+            { success: false, error: error.message },
+            { status: 400 }
+          );
+        }
+      } else {
+        externalAuthUserId = data.user?.id ?? null;
+        supabaseUserCreated = true;
       }
 
-      externalAuthUserId = data.user?.id ?? null;
-
-      if (supabaseClient) {
+      // Sign the user in via the SSR client so session cookies are set
+      if (supabaseClient && externalAuthUserId) {
         await supabaseClient.auth.signInWithPassword({ email, password });
       }
-    } else if (supabaseUrl && supabaseAnonKey) {
-      const { data, error } = await supabaseClient!.auth.signUp({
+    } else if (supabaseUrl && supabaseAnonKey && supabaseClient) {
+      const { data, error } = await supabaseClient.auth.signUp({
         email,
         password,
-        options: {
-          data: {
-            full_name: name,
-          },
-        },
+        options: { data: { full_name: name } },
       });
 
       if (error) {
@@ -86,79 +123,53 @@ export async function POST(request: NextRequest) {
       }
 
       externalAuthUserId = data.user?.id ?? null;
+      supabaseUserCreated = true;
     }
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      return NextResponse.json(
-        { success: false, error: "A user with this email already exists" },
-        { status: 409 }
-      );
-    }
-
+    // ── Step 3: Create Prisma user (with rollback on failure) ──────────────────
     const hashedPassword = await hashPassword(password);
 
-    const user = await prisma.user.create({
-      data: {
-        ...(externalAuthUserId ? { id: externalAuthUserId } : {}),
-        name,
-        email,
-        passwordHash: hashedPassword,
-        role: userRole,
-        ...(userRole === "COOK"
-          ? {
-              cookProfile: {
-                create: {
-                  neighborhood: neighborhood ?? null,
-                  specialties: Array.isArray(specialties)
-                    ? specialties.join(", ")
-                    : null,
+    let user;
+    try {
+      user = await prisma.user.create({
+        data: {
+          ...(externalAuthUserId ? { id: externalAuthUserId } : {}),
+          name,
+          email,
+          passwordHash: hashedPassword,
+          role: userRole,
+          ...(userRole === "COOK"
+            ? {
+                cookProfile: {
+                  create: {
+                    neighborhood: neighborhood ?? null,
+                    specialties: Array.isArray(specialties)
+                      ? specialties.join(", ")
+                      : null,
+                  },
                 },
-              },
-            }
-          : {}),
-      },
-      include: {
-        cookProfile: userRole === "COOK",
-      },
-    });
-
-    if (supabaseAdmin) {
-      const { error: profileSyncError } = await supabaseAdmin.from("app_profiles").upsert(
-        {
-          id: user.id,
-          full_name: user.name,
-          email: user.email,
-          onboarding_completed: false,
+              }
+            : {}),
         },
-        { onConflict: "id" }
-      );
-
-      if (profileSyncError) {
-        console.warn("Register app_profiles sync warning:", profileSyncError.message);
-      }
-
-      if (user.role === "COOK") {
-        const { error: cookProfileSyncError } = await supabaseAdmin.from("app_cook_profiles").upsert(
-          {
-            user_id: user.id,
-            specialties: Array.isArray(specialties)
-              ? specialties.join(", ")
-              : specialties ?? null,
-            neighborhood: neighborhood ?? null,
-          },
-          { onConflict: "user_id" }
+        include: {
+          cookProfile: userRole === "COOK",
+        },
+      });
+    } catch (prismaError) {
+      // Rollback: delete the newly created Supabase user so the next attempt works
+      if (supabaseAdmin && supabaseUserCreated && externalAuthUserId) {
+        await supabaseAdmin.auth.admin.deleteUser(externalAuthUserId).catch((e) =>
+          console.error("Supabase rollback failed:", e)
         );
-
-        if (cookProfileSyncError) {
-          console.warn("Register app_cook_profiles sync warning:", cookProfileSyncError.message);
-        }
       }
+      console.error("Prisma user creation error:", prismaError);
+      return NextResponse.json(
+        { success: false, error: "Failed to create account. Please try again." },
+        { status: 500 }
+      );
     }
 
+    // ── Step 4: Issue session cookie ────────────────────────────────────────────
     await setAuthCookie({
       id: user.id,
       name: user.name,

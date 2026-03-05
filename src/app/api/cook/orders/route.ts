@@ -35,21 +35,41 @@ export async function GET(request: NextRequest) {
         take: limit,
       });
 
-      return NextResponse.json({
-        success: true,
-        orders: fallbackOrders.map((order) => ({
-          id: order.id,
-          orderNumber: order.orderNumber,
-          customerName: order.customer.name,
-          items: order.items.map((item) => ({
+      const normalizedOrders: Array<{
+        id: string;
+        orderNumber: string;
+        customerName: string;
+        items: Array<{ name: string; qty: number; price: number }>;
+        total: number;
+        status: string;
+        createdAt: Date;
+      }> = [];
+
+      for (const order of fallbackOrders) {
+        const normalizedItems: Array<{ name: string; qty: number; price: number }> = [];
+
+        for (const item of order.items) {
+          normalizedItems.push({
             name: item.dish.name,
             qty: item.quantity,
             price: item.price,
-          })),
+          });
+        }
+
+        normalizedOrders.push({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customer.name,
+          items: normalizedItems,
           total: order.total,
           status: order.status.toLowerCase(),
           createdAt: order.createdAt,
-        })),
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        orders: normalizedOrders,
       });
     }
 

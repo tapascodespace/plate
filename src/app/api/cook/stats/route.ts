@@ -31,12 +31,51 @@ export async function GET() {
       });
 
       const totalOrders = orders.length;
-      const pendingOrders = orders.filter((order) =>
-        ["PENDING", "CONFIRMED", "PREPARING"].includes(order.status)
-      ).length;
-      const revenue = orders
-        .filter((order) => order.status === "DELIVERED")
-        .reduce((sum, order) => sum + order.total, 0);
+      let pendingOrders = 0;
+      let revenue = 0;
+
+      for (const order of orders) {
+        if (["PENDING", "CONFIRMED", "PREPARING"].includes(order.status)) {
+          pendingOrders += 1;
+        }
+
+        if (order.status === "DELIVERED") {
+          revenue += order.total;
+        }
+      }
+
+      const recentOrders: Array<{
+        id: string;
+        orderNumber: string;
+        customerName: string;
+        items: Array<{ name: string; qty: number; price: number }>;
+        total: number;
+        status: string;
+        createdAt: Date;
+      }> = [];
+
+      const recentSource = orders.slice(0, 10);
+      for (const order of recentSource) {
+        const normalizedItems: Array<{ name: string; qty: number; price: number }> = [];
+
+        for (const item of order.items) {
+          normalizedItems.push({
+            name: item.dish.name,
+            qty: item.quantity,
+            price: item.price,
+          });
+        }
+
+        recentOrders.push({
+          id: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customer.name,
+          items: normalizedItems,
+          total: order.total,
+          status: order.status.toLowerCase(),
+          createdAt: order.createdAt,
+        });
+      }
 
       return NextResponse.json({
         success: true,
@@ -45,19 +84,7 @@ export async function GET() {
           pendingOrders,
           revenue,
           rating: cookProfile.rating,
-          recentOrders: orders.slice(0, 10).map((order) => ({
-            id: order.id,
-            orderNumber: order.orderNumber,
-            customerName: order.customer.name,
-            items: order.items.map((item) => ({
-              name: item.dish.name,
-              qty: item.quantity,
-              price: item.price,
-            })),
-            total: order.total,
-            status: order.status.toLowerCase(),
-            createdAt: order.createdAt,
-          })),
+          recentOrders,
         },
       });
     }

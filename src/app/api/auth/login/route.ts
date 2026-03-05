@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import prisma from "@/lib/db";
 import { hashPassword, verifyPassword, setAuthCookie } from "@/lib/auth";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: NextRequest) {
   try {
@@ -95,35 +94,6 @@ export async function POST(request: NextRequest) {
         { success: false, error: "User not found" },
         { status: 404 }
       );
-    }
-
-    const supabaseAdmin = createSupabaseAdminClient();
-    if (supabaseAdmin) {
-      const { error: profileSyncError } = await supabaseAdmin.from("app_profiles").upsert(
-        {
-          id: user.id,
-          full_name: user.name,
-          email: user.email,
-        },
-        { onConflict: "id" }
-      );
-
-      if (profileSyncError) {
-        console.warn("Login app_profiles sync warning:", profileSyncError.message);
-      }
-
-      if (user.role === "COOK") {
-        const { error: cookProfileSyncError } = await supabaseAdmin.from("app_cook_profiles").upsert(
-          {
-            user_id: user.id,
-          },
-          { onConflict: "user_id" }
-        );
-
-        if (cookProfileSyncError) {
-          console.warn("Login app_cook_profiles sync warning:", cookProfileSyncError.message);
-        }
-      }
     }
 
     await setAuthCookie({
