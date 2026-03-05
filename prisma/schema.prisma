@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  passwordHash   String
+  phone          String?
+  avatar         String?
+  flatNumber     String?
+  floorNumber    Int?
+  bio            String?
+  onboardingCompleted Boolean @default(false)
+  buildingId     String?
+  role           String    @default("CUSTOMER")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  building       Building? @relation(fields: [buildingId], references: [id])
+  cookProfile    CookProfile?
+  orders         Order[]       @relation("CustomerOrders")
+  reviews        Review[]
+  addresses      Address[]
+}
+
+model Building {
+  id          String   @id @default(cuid())
+  name        String
+  address     String
+  city        String
+  pincode     String
+  inviteCode  String   @unique
+  createdAt   DateTime @default(now())
+
+  residents   User[]
+}
+
+model CookProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio             String?
+  specialties     String?
+  coverImage      String?
+  kitchen         String?
+  isVerified      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  rating          Float     @default(0)
+  totalReviews    Int       @default(0)
+  totalOrders     Int       @default(0)
+  latitude        Float?
+  longitude       Float?
+  neighborhood    String?
+  city            String?
+  acceptingOrders Boolean   @default(true)
+  prepTimeMin     Int       @default(30)
+  deliveryRadius  Float     @default(5)
+
+  dishes          Dish[]
+  orders          Order[]   @relation("CookOrders")
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Dish {
+  id              String    @id @default(cuid())
+  cookProfileId   String
+  cookProfile     CookProfile @relation(fields: [cookProfileId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  price           Float
+  image           String?
+  category        String?
+  cuisine         String?
+  tags            String?
+  isAvailable     Boolean   @default(true)
+  isVegetarian    Boolean   @default(false)
+  isVegan         Boolean   @default(false)
+  spiceLevel      Int       @default(0)
+  servingSize     String?
+  prepTimeMin     Int       @default(30)
+
+  orderItems      OrderItem[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Order {
+  id              String    @id @default(cuid())
+  orderNumber     String    @unique
+  customerId      String
+  customer        User      @relation("CustomerOrders", fields: [customerId], references: [id])
+  cookProfileId   String
+  cookProfile     CookProfile @relation("CookOrders", fields: [cookProfileId], references: [id])
+  status          String    @default("PENDING")
+  items           OrderItem[]
+  subtotal        Float
+  deliveryFee     Float     @default(0)
+  total           Float
+  deliveryAddress String?
+  deliveryNotes   String?
+  estimatedReady  DateTime?
+  confirmedAt     DateTime?
+  preparedAt      DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  review          Review?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dishId      String
+  dish        Dish    @relation(fields: [dishId], references: [id])
+  quantity    Int
+  price       Float
+  notes       String?
+}
+
+model Review {
+  id          String    @id @default(cuid())
+  orderId     String    @unique
+  order       Order     @relation(fields: [orderId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  rating      Int
+  comment     String?
+  images      String?
+  createdAt   DateTime  @default(now())
+}
+
+model Address {
+  id          String  @id @default(cuid())
+  userId      String
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String?
+  street      String
+  city        String
+  state       String?
+  zipCode     String?
+  latitude    Float?
+  longitude   Float?
+  isDefault   Boolean @default(false)
+}
